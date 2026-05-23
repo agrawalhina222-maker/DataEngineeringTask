@@ -17,3 +17,318 @@ sys.path.append("/Workspace/Users/hina.agrawal6@gmail.com/first")
 # !!! Before performing any data analysis, make sure to run the pipeline to materialize the sample datasets. The tables referenced in this notebook depend on that step.
 
 display(spark.sql("SELECT * FROM workspace.default.sample_aggregation_first"))
+
+# COMMAND ----------
+
+
+# =============================================================================
+# PYSPARK CODING CHALLENGES — SENIOR LEVEL INTERVIEW PREP
+# =============================================================================
+# Topics Covered:
+#   1.  DataFrame Basics & Schema
+#   2.  Filtering & Conditional Logic
+#   3.  Aggregations & GroupBy
+#   4.  Window Functions
+#   5.  Joins & Deduplication
+#   6.  String & Date Operations
+#   7.  Complex Types (Array, Map, Struct)
+#   8.  Null Handling
+#   9.  Performance & Optimization
+#   10. RDD Operations
+#   11. Spark SQL
+#   12. Streaming (Conceptual + Code)
+#
+# HOW TO USE:
+#   - Each challenge has: Problem → Hint → Your Solution Space → Answer
+#   - Try solving before looking at the answer
+#   - Difficulty: ⭐ Easy | ⭐⭐ Medium | ⭐⭐⭐ Hard
+# =============================================================================
+
+from pyspark.sql import SparkSession
+from pyspark.sql import functions as F
+from pyspark.sql import Window
+from pyspark.sql.types import (
+    StructType, StructField, StringType, IntegerType,
+    DoubleType, DateType, ArrayType, MapType, TimestampType, BooleanType
+)
+from datetime import date, datetime
+
+spark = SparkSession.builder \
+    .appName("PySpark_Interview_Challenges") \
+    .config("spark.sql.shuffle.partitions", "4") \
+    .getOrCreate()
+
+# spark.setLogLevel("WARN")
+
+print("=" * 70)
+print("  PYSPARK CODING CHALLENGES — SENIOR INTERVIEW PREP")
+print("=" * 70)
+
+
+
+# COMMAND ----------
+
+# In Databricks Serverless (Spark Connect), spark.getwebuiUrl() is NOT available
+# because Spark Connect doesn't expose JVM attributes like sparkContext or Web UI URL
+
+print("Spark Version:", spark.version)
+
+print("\n" + "="*70)
+print("HOW TO ACCESS SPARK UI IN DATABRICKS SERVERLESS:")
+print("="*70)
+print("1. Click the compute dropdown in the top-right corner of this notebook")
+print("2. Select 'Spark UI' from the dropdown menu")
+print("3. Or navigate to: Compute → Serverless Compute → Spark UI")
+print("\nNote: In Spark Connect mode (Serverless), you cannot access:")
+print("  - spark.getwebuiUrl()")
+print("  - spark.sparkContext")
+print("  - Direct JVM attributes")
+print("\nUse the Databricks UI to access Spark UI instead.")
+
+# COMMAND ----------
+
+
+
+# =============================================================================
+# ── INLINE DATA SETUP (No external files needed) ──────────────────────────────
+# =============================================================================
+
+# ── Dataset 1: Trades ─────────────────────────────────────────────────────────
+trades_data = [
+    (1,  "AAPL", 150.0,  100, "2024-01-01", "BUY",  "Alice",   "APAC"),
+    (2,  "GOOG", 2800.0, 50,  "2024-01-01", "SELL", "Bob",     "EMEA"),
+    (3,  "AAPL", 152.0,  200, "2024-01-02", "BUY",  "Alice",   "APAC"),
+    (4,  "MSFT", 300.0,  150, "2024-01-02", "BUY",  "Charlie", "AMER"),
+    (5,  "AAPL", 148.0,  80,  "2024-01-03", "SELL", "Bob",     "APAC"),
+    (6,  "GOOG", 2750.0, 30,  "2024-01-03", "BUY",  "Alice",   "EMEA"),
+    (7,  "MSFT", 310.0,  200, "2024-01-04", "SELL", "Charlie", "AMER"),
+    (8,  "TSLA", 900.0,  60,  "2024-01-04", "BUY",  "Bob",     "AMER"),
+    (9,  "AAPL", 155.0,  120, "2024-01-05", "BUY",  "Alice",   "APAC"),
+    (10, "TSLA", 870.0,  40,  "2024-01-05", "SELL", "Charlie", "AMER"),
+    (11, "GOOG", None,   20,  "2024-01-06", "BUY",  "Bob",     "EMEA"),  # null price
+    (12, "MSFT", 305.0,  None,"2024-01-06", "BUY",  "Alice",   "AMER"),  # null qty
+    (13, "AAPL", 150.0,  100, "2024-01-01", "BUY",  "Alice",   "APAC"),  # duplicate of row 1
+    (14, "TSLA", 920.0,  90,  "2024-01-07", "BUY",  "Bob",     "AMER"),
+    (15, "AAPL", 160.0,  300, "2024-01-07", "SELL", "Charlie", "APAC"),
+]
+
+trades_schema = StructType([
+    StructField("trade_id",   IntegerType(), False),
+    StructField("symbol",     StringType(),  False),
+    StructField("price",      DoubleType(),  True),
+    StructField("quantity",   IntegerType(), True),
+    StructField("trade_date", StringType(),  False),
+    StructField("side",       StringType(),  False),
+    StructField("trader",     StringType(),  False),
+    StructField("region",     StringType(),  False),
+])
+
+
+# COMMAND ----------
+
+trades_df=spark.createDataFrame(trades_data, trades_schema)
+display(trades_df)
+
+# COMMAND ----------
+
+trades_df=trades_df.withColumn("trade_date",F.to_date(F.col("trade_date"),"yyyy-MM-dd"))\
+                .withColumn("price",F.round(F.col("price"),2)) \
+                .withColumn("notional",F.col("price")*F.col("quantity"))
+display(trades_df)
+
+# COMMAND ----------
+
+traders_data = [
+    ("Alice",   "Senior Trader", "Equities",    500000),
+    ("Bob",     "Junior Trader", "Derivatives", 200000),
+    ("Charlie", "Senior Trader", "Equities",    450000),
+    ("Diana",   "Head Trader",   "All",         1000000),  # no trades — for anti-join
+]
+
+traders_schema = StructType([
+    StructField("trader_name", StringType(),  False),
+    StructField("title",       StringType(),  False),
+    StructField("desk",        StringType(),  False),
+    StructField("limit_usd",   IntegerType(), False),
+])
+
+traders_df = spark.createDataFrame(traders_data, schema=traders_schema)
+
+
+# COMMAND ----------
+
+
+# ── Dataset 3: Prices (time series) ───────────────────────────────────────────
+prices_data = [
+    ("AAPL", "2024-01-01", 150.0),
+    ("AAPL", "2024-01-02", 152.0),
+    ("AAPL", "2024-01-03", 148.0),
+    ("AAPL", "2024-01-04", 151.0),
+    ("AAPL", "2024-01-05", 155.0),
+    ("AAPL", "2024-01-06", 157.0),
+    ("AAPL", "2024-01-07", 160.0),
+    ("GOOG", "2024-01-01", 2800.0),
+    ("GOOG", "2024-01-02", 2780.0),
+    ("GOOG", "2024-01-03", 2750.0),
+    ("GOOG", "2024-01-04", 2760.0),
+    ("GOOG", "2024-01-05", 2790.0),
+    ("GOOG", "2024-01-06", 2810.0),
+    ("GOOG", "2024-01-07", 2830.0),
+    ("TSLA", "2024-01-04", 900.0),
+    ("TSLA", "2024-01-05", 870.0),
+    ("TSLA", "2024-01-06", 890.0),
+    ("TSLA", "2024-01-07", 920.0),
+]
+
+prices_df = spark.createDataFrame(prices_data, ["symbol", "price_date", "close_price"]) \
+    .withColumn("price_date", F.to_date(F.col("price_date"), "yyyy-MM-dd"))
+
+# COMMAND ----------
+
+
+# ── Dataset 4: Nested / Complex data ─────────────────────────────────────────
+nested_data = [
+    ("Alice",   ["AAPL", "GOOG", "MSFT"], {"risk": "LOW",  "desk": "EQ"}),
+    ("Bob",     ["TSLA", "AAPL"],         {"risk": "HIGH", "desk": "DERIV"}),
+    ("Charlie", ["MSFT"],                 {"risk": "MED",  "desk": "EQ"}),
+    ("Diana",   [],                       {"risk": "LOW",  "desk": "ALL"}),
+]
+
+nested_df = spark.createDataFrame(
+    nested_data,
+    ["trader", "watchlist", "attributes"]
+)
+
+print("\nDatasets loaded successfully!")
+print(f"  trades_df:  {trades_df.count()} rows")
+print(f"  traders_df: {traders_df.count()} rows")
+print(f"  prices_df:  {prices_df.count()} rows")
+print(f"  nested_df:  {nested_df.count()} rows")
+
+
+
+# COMMAND ----------
+
+
+# =============================================================================
+# ██████████████████████████████████████████████████████████████████████████████
+#  SECTION 1 — DATAFRAME BASICS & SCHEMA
+# ██████████████████████████████████████████████████████████████████████████████
+# =============================================================================
+
+print("\n" + "=" * 70)
+print("  SECTION 1 — DATAFRAME BASICS & SCHEMA")
+print("=" * 70)
+
+# -----------------------------------------------------------------------------
+# CHALLENGE 1.1 ⭐
+# Inspect the trades_df:
+#   a) Print the schema
+#   b) Show first 5 rows
+#   c) Get total row count
+#   d) Get distinct symbols
+#   e) Get summary statistics for price and quantity
+# -----------------------------------------------------------------------------
+print("\n--- Challenge 1.1: DataFrame Inspection ---")
+# HINT: printSchema(), show(), count(), distinct(), describe()
+
+# YOUR SOLUTION:
+
+
+# ANSWER:
+
+nested_df.show(2)
+
+# COMMAND ----------
+
+trades_df.select("symbol").distinct().show()
+
+# COMMAND ----------
+
+trades_df.withColumns({"price":F.round(F.col("price"),2),"notional":F.col("price")*F.col("quantity")}).show()
+trades_df.describe("price","quantity").show()
+
+
+# COMMAND ----------
+
+
+
+# COMMAND ----------
+
+
+
+# -----------------------------------------------------------------------------
+# CHALLENGE 1.2 ⭐
+# Add the following computed columns to trades_df:
+#   a) "notional_m"  — notional value in millions (rounded to 4 decimal places)
+#   b) "is_large"    — True if notional > 20000, else False
+#   c) "trade_label" — "BUY-AAPL", "SELL-GOOG" etc. (side + "-" + symbol)
+# -----------------------------------------------------------------------------
+print("\n--- Challenge 1.2: Adding Computed Columns ---")
+# HINT: withColumn(), F.round(), F.when(), F.concat_ws()
+trades_df= trades_df.withColumns({"notional_m":F.round(F.col("notional")/1000000,4),
+                                 "is_large":F.when(F.col("notional")>20000,True).otherwise(False),
+                                 "trade_label":F.concat(F.col("side"),F.lit("_"),F.col("symbol"))})
+# YOUR SOLUTION:
+
+
+# ANSWER:
+trades_df.show()
+
+
+# COMMAND ----------
+
+# =============================================================================
+# ██████████████████████████████████████████████████████████████████████████████
+#  SECTION 2 — FILTERING & CONDITIONAL LOGIC
+# ██████████████████████████████████████████████████████████████████████████████
+# =============================================================================
+
+print("\n" + "=" * 70)
+print("  SECTION 2 — FILTERING & CONDITIONAL LOGIC")
+print("=" * 70)
+
+# -----------------------------------------------------------------------------
+# CHALLENGE 2.1 ⭐
+# Filter trades_df to get:
+#   a) Only BUY trades for AAPL or GOOG
+#   b) Trades where notional is between 10,000 and 50,000
+#   c) Trades where price is NOT null AND quantity > 50
+# -----------------------------------------------------------------------------
+print("\n--- Challenge 2.1: Filtering ---")
+# HINT: filter(), isin(), between(), isNotNull(), & operator
+
+# YOUR SOLUTION:
+
+filter_trades_df= trades_df.filter(((F.col("side")=="BUY" ) & (F.col("symbol").isin(["AAPL","GOOG"])))
+                                   &(F.col("notional").between(10000,50000))
+                                   &(F.col("price").isNotNull()& (F.col("quantity")>50))
+).show()
+
+# COMMAND ----------
+
+
+# -----------------------------------------------------------------------------
+# CHALLENGE 2.2 ⭐⭐  [VERY COMMON INTERVIEW QUESTION]
+# Create a "risk_tier" column using CASE WHEN logic:
+#   - notional >= 100,000  → "HIGH"
+#   - notional >= 30,000   → "MEDIUM"
+#   - notional >= 0        → "LOW"
+#   - null notional        → "UNKNOWN"
+# Then count trades per risk_tier.
+# -----------------------------------------------------------------------------
+print("\n--- Challenge 2.2: CASE WHEN / F.when() ---")
+# HINT: F.when().when().otherwise(), then groupBy + count
+
+# YOUR SOLUTION:
+trades_df=trades_df.withColumn("risk_tier", F.when(F.col("notional")>100_000,"HIGH")
+                              .when(F.col("notional")>30_000,"MEDIUM")
+                              .when(F.col("notional")>=0,"LOW")
+                              .otherwise("UNKNOWN"))
+display(trades_df)
+display(trades_df.groupBy("risk_tier").agg( F.count("trade_id"),F.min("notional"),F.max("notional")))
+                        
+
+# COMMAND ----------
+
+
