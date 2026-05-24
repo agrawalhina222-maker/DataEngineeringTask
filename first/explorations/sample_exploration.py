@@ -332,3 +332,953 @@ display(trades_df.groupBy("risk_tier").agg( F.count("trade_id"),F.min("notional"
 # COMMAND ----------
 
 
+# =============================================================================
+# ██████████████████████████████████████████████████████████████████████████████
+#  SECTION 3 — AGGREGATIONS & GROUPBY
+# ██████████████████████████████████████████████████████████████████████████████
+# =============================================================================
+
+print("\n" + "=" * 70)
+print("  SECTION 3 — AGGREGATIONS & GROUPBY")
+print("=" * 70)
+
+# -----------------------------------------------------------------------------
+# CHALLENGE 3.1 ⭐⭐  [MOST ASKED]
+# For each symbol, calculate:
+#   - total_trades    : number of trades
+#   - total_notional  : sum of notional
+#   - avg_price       : average price (ignore nulls)
+#   - max_price       : highest price
+#   - min_price       : lowest price
+#   - buy_count       : number of BUY trades
+#   - sell_count      : number of SELL trades
+# Order by total_notional descending.
+# -----------------------------------------------------------------------------
+print("\n--- Challenge 3.1: Multi-Aggregation per Symbol ---")
+# HINT: groupBy().agg(), F.count(), F.sum(), F.avg(), F.when() inside F.count()
+
+# YOUR SOLUTION:
+trades_df.groupBy("symbol").agg(
+    F.count("*").alias("total_trades"),
+    F.sum("notional").alias("total_notional"),
+    F.avg(F.when(F.col("price").isNotNull(), F.col("price"))).alias("avg_price"),
+    F.max("price").alias("max_price"),
+    F.min("price").alias("min_price"),
+    F.count(F.when(F.col("side") == "BUY",1)).alias("buy_count"),
+    F.count(F.when(F.col("side") == "SELL",1)).alias("sell_count")
+).orderBy(F.col("total_notional").desc()).show()
+# -----------------------------------------------------------------------------
+#
+
+# COMMAND ----------
+
+
+# -----------------------------------------------------------------------------
+# CHALLENGE 3.2 ⭐⭐
+# Find the trader with the HIGHEST total notional per region.
+# Expected output: region, trader, total_notional
+# (This is a "top N per group" problem — very common!)
+# -----------------------------------------------------------------------------
+print("\n--- Challenge 3.2: Top Trader per Region ---")
+# HINT: groupBy(region, trader).agg() → then Window rank or another groupBy
+
+# YOUR SOLUTION:
+display(trades_df.select("region","trader","notional").withColumn("rank",F.rank().over(Window.partitionBy(F.col("region")).orderBy(F.col("notional").desc()))).filter(F.col("rank")==1))
+# -----------------------------------------------------------------------------
+# CHALLENGE 3")
+
+# COMMAND ----------
+
+
+# -----------------------------------------------------------------------------
+# CHALLENGE 3.3 ⭐⭐
+# Calculate the percentage contribution of each symbol's notional
+# to the TOTAL notional across ALL trades.
+# Output: symbol, total_notional, pct_of_total (rounded to 2 decimal places)
+# -----------------------------------------------------------------------------
+print("\n--- Challenge 3.3: Percentage of Total ---")
+# HINT: Two approaches:
+#   Option A: Window with unboundedPreceding + unboundedFollowing (no groupBy collapse)
+
+display(trades_df.select("symbol","notional").withColumn("total_notional",F.sum("notional").over(Window.partitionBy("symbol"))).withColumn("pct_of_total",F.round((F.col("notional")/F.col("total_notional"))*100,2)).orderBy("symbol"))
+
+
+#   Option B: groupBy + join back with grand total
+
+# YOUR SOLUTION:
+
+
+# COMMAND ----------
+
+
+# =============================================================================
+# ██████████████████████████████████████████████████████████████████████████████
+#  SECTION 4 — WINDOW FUNCTIONS  [MOST ASKED IN SENIOR INTERVIEWS]
+# ██████████████████████████████████████████████████████████████████████████████
+# =============================================================================
+
+print("\n" + "=" * 70)
+print("  SECTION 4 — WINDOW FUNCTIONS")
+print("=" * 70)
+
+# -----------------------------------------------------------------------------
+# CHALLENGE 4.1 ⭐⭐  [CLASSIC INTERVIEW QUESTION]
+# Using prices_df, for each symbol calculate:
+#   a) previous day's close price (lag)
+#   b) daily return % = (today - yesterday) / yesterday * 100
+#   c) 3-day rolling average price
+#   d) cumulative max price (running max from start)
+# -----------------------------------------------------------------------------
+print("\n--- Challenge 4.1: Time Series with Window Functions ---")
+# HINT: Window.partitionBy("symbol").orderBy("price_date")
+#       F.lag(), rowsBetween(-(N-1), 0), unboundedPreceding + currentRow
+
+# YOUR SOLUTION:
+
+# prices_df.show(5)
+
+windowSpec=Window.partitionBy("symbol").orderBy("price_date")
+
+prices_df.withColumn("price_date",F.to_date(F.col("price_date"),"yyyy-MM-dd")) \
+        .withColumn("previous_day_close",F.lag("close_price",1).over(windowSpec)) \
+        .withColumn("daily_return_pct", ((F.col("close_price")- F.col("previous_day_close"))/F.col("previous_day_close"))*100) \
+        .withColumn("rolling_3davg_price",F.avg("close_price").over(windowSpec.rowsBetween(-2,0))) \
+        .withColumn("cumulative_max_price",F.sum("close_price").over(windowSpec.rowsBetween(Window.unboundedPreceding,0))) .show()
+
+# COMMAND ----------
+
+
+# -----------------------------------------------------------------------------
+# CHALLENGE 4.2 ⭐⭐  [DEDUPLICATION — VERY COMMON]
+# trades_df has duplicate rows (trade_id 1 and 13 are identical except trade_id).
+# Remove duplicates keeping only the FIRST occurrence based on trade_id.
+# Also: deduplicate by (symbol, trade_date, side, trader) keeping lowest trade_id.
+# -----------------------------------------------------------------------------
+print("\n--- Challenge 4.2: Deduplication with row_number() ---")
+# HINT: Window.partitionBy(dup_cols).orderBy("trade_id") → row_number() == 1
+
+# YOUR SOLUTION:
+print(trades_df.columns)
+
+#group by all the columns except trade_id ascending
+
+w_dedup = Window.partitionBy("symbol", "trade_date", "side", "trader","region") \
+                .orderBy(F.col("trade_id").asc())
+
+result_4_2 = trades_df \
+    .withColumn("rn", F.row_number().over(w_dedup)) \
+    .filter(F.col("rn") == 1) \
+    .drop("rn")
+
+print(f"Before dedup: {trades_df.count()} rows")
+print(f"After dedup:  {result_4_2.count()} rows")
+result_4_2.show()
+
+# COMMAND ----------
+
+
+# -----------------------------------------------------------------------------
+# CHALLENGE 4.3 ⭐⭐⭐  [HARD — GAPS AND ISLANDS / SESSIONIZATION]
+# For each trader, find their trading "streaks":
+#   - A streak = consecutive trading days (no gap)
+#   - Assign a streak_id to each group of consecutive days per trader
+#
+# Approach: use lag to find gaps, then cumulative sum of gap flags
+# -----------------------------------------------------------------------------
+print("\n--- Challenge 4.3: Consecutive Day Streaks (Gaps & Islands) ---")
+# HINT:
+#   1. Get distinct (trader, trade_date)
+#   2. lag(trade_date) per trader ordered by date
+#   3. Flag if gap > 1 day → is_new_streak (1 or 0)
+#   4. cumsum of is_new_streak = streak_id
+
+# YOUR SOLUTION:
+streak_data= trades_df.select("trader","trade_date").distinct() \
+.withColumn("trade_date",F.to_date(F.col("trade_date"),"yyyy-MM-dd")) \
+        .withColumn("lagged_date",F.lag(F.col("trade_date"),1).over(Window.partitionBy("trader").orderBy("trade_date"))) \
+        .withColumn("gap" , F.datediff("trade_date","lagged_date")) \
+        .withColumn("is_new_streak",F.when((F.col("gap").isNull() )| (F.col("gap")>1) ,1).otherwise(0)) \
+        .withColumn("streak_id",F.sum("is_new_streak").over(Window.partitionBy("trader").orderBy("trade_date").rowsBetween(Window.unboundedPreceding, Window.currentRow))
+        )
+        
+streak_data.show()
+
+
+
+# COMMAND ----------
+
+streak_data.select("trader", "streak_id").withColumn("streak_count", F.count("streak_id").over(Window.partitionBy("trader", "streak_id"))).distinct().show()
+
+
+# COMMAND ----------
+
+
+# -----------------------------------------------------------------------------
+# CHALLENGE 4.4 ⭐⭐⭐  [HARD — RUNNING TOTAL WITH RESET]
+# For each trader, calculate a running total of notional.
+# BUT reset the running total whenever it exceeds 100,000.
+# (Simulates a daily limit reset scenario)
+# -----------------------------------------------------------------------------
+print("\n--- Challenge 4.4: Running Total with Reset ---")
+
+# YOUR SOLUTION:
+trades_df.select("notional","trader","trade_date") \
+.withColumn("trade_date",F.to_date(F.col("trade_date"),"yyyy-MM-dd")) \
+.withColumn("runningTotal",F.sum("notional").over(Window.partitionBy("trader").orderBy("trade_date").rowsBetween(Window.unboundedPreceding, Window.currentRow))) \
+.withColumn("remainder",F.when(F.col("runningTotal")>100000, F.col("runningTotal") % 100000).otherwise(F.col("runningTotal"))).show()
+
+# COMMAND ----------
+
+
+# -----------------------------------------------------------------------------
+# CHALLENGE 4.4 ⭐⭐⭐  [HARD — RUNNING TOTAL WITH RESET]
+# For each trader, calculate a running total of notional.
+# BUT reset the running total whenever it exceeds 100,000.
+# (Simulates a daily limit reset scenario)
+# -----------------------------------------------------------------------------
+print("\n--- Challenge 4.4: Running Total with Reset ---")
+
+# YOUR SOLUTION:
+trades_df.select("notional","trader","trade_id") \
+.withColumn("runningTotal",F.sum("notional").over(Window.partitionBy("trader").orderBy("trade_id").rowsBetween(Window.unboundedPreceding, Window.currentRow))) \
+.withColumn("remainder",F.when(F.col("runningTotal")>100000, F.col("runningTotal") % 100000).otherwise(F.col("runningTotal"))).show()
+
+# COMMAND ----------
+
+from pyspark.sql.functions import pandas_udf, PandasUDFType
+import pandas as pd
+
+reset_schema = StructType([
+    StructField("trader",       StringType(),  True),
+    StructField("trade_id",     IntegerType(), True),
+    StructField("notional",     DoubleType(),  True),
+    StructField("running_total",DoubleType(),  True),
+    StructField("reset_count",  IntegerType(), True),
+])
+
+@pandas_udf(reset_schema, PandasUDFType.GROUPED_MAP)
+def running_total_with_reset(pdf: pd.DataFrame) -> pd.DataFrame:
+    pdf = pdf.sort_values("trade_id").reset_index(drop=True)
+    running = 0.0
+    resets  = 0
+    totals  = []
+    reset_counts = []
+    for _, row in pdf.iterrows():
+        n = row["notional"] if row["notional"] is not None else 0.0
+        if running + n > 100_000:
+            running = n   # reset
+            resets += 1
+        else:
+            running += n
+        totals.append(running)
+        reset_counts.append(resets)
+    pdf["running_total"] = totals
+    pdf["reset_count"]   = reset_counts
+    return pdf[["trader", "trade_id", "notional", "running_total", "reset_count"]]
+
+result_4_4 = trades_df.filter(F.col("notional").isNotNull()) \
+    .groupby("trader").apply(running_total_with_reset)
+
+result_4_4.orderBy("trader", "trade_id").show()
+
+# COMMAND ----------
+
+
+# =============================================================================
+# ██████████████████████████████████████████████████████████████████████████████
+#  SECTION 5 — JOINS & DEDUPLICATION
+# ██████████████████████████████████████████████████████████████████████████████
+# =============================================================================
+
+print("\n" + "=" * 70)
+print("  SECTION 5 — JOINS")
+print("=" * 70)
+
+# -----------------------------------------------------------------------------
+# CHALLENGE 5.1 ⭐⭐  [CLASSIC]
+# Join trades_df with traders_df to add title and limit_usd.
+# Then flag trades where notional EXCEEDS the trader's limit.
+# -----------------------------------------------------------------------------
+print("\n--- Challenge 5.1: Enrichment Join + Limit Check ---")
+# HINT: left join on trader == trader_name, then F.when()
+
+# YOUR SOLUTION:
+
+
+# ANSWER:
+result_5_1 = trades_df.join(
+    F.broadcast(traders_df),           # broadcast — traders_df is small
+    trades_df["trader"] == traders_df["trader_name"],
+    how="left"
+).drop("trader_name") \
+ .withColumn("limit_breached",
+    F.when(F.col("notional") > F.col("limit_usd"), True).otherwise(False)
+ )
+
+result_5_1.select("trade_id", "trader", "notional", "limit_usd", "limit_breached").show()
+
+
+# -----------------------------------------------------------------------------
+# CHALLENGE 5.2 ⭐⭐  [ANTI-JOIN — COMMON INTERVIEW QUESTION]
+# Find traders who have NOT made any trades.
+# (Diana is in traders_df but has no trades in trades_df)
+# -----------------------------------------------------------------------------
+print("\n--- Challenge 5.2: Anti-Join (traders with no trades) ---")
+# HINT: left_anti join
+
+# YOUR SOLUTION:
+
+
+# ANSWER:
+result_5_2 = traders_df.join(
+    trades_df.select("trader").distinct(),
+    traders_df["trader_name"] == trades_df["trader"],
+    how="left_anti"
+)
+result_5_2.show()
+
+
+
+# COMMAND ----------
+
+# ----------------------------------------------------------------
+# CHALLENGE 5.3 ⭐⭐⭐  [SELF JOIN — HARD]
+# Find all pairs of trades on the same day for the same symbol
+# where one is a BUY and the other is a SELL.
+# Output: symbol, trade_date, buy_trade_id, sell_trade_id, buy_price, sell_price
+# -----------------------------------------------------------------------------
+print("\n--- Challenge 5.3: Self Join (BUY-SELL pairs same day) ---")
+# HINT: alias the DataFrame twice, join on symbol + date, filter side mismatch
+
+# YOUR SOLUTION:
+
+
+# ANSWER:
+buys  = trades_df.filter(F.col("side") == "BUY") \
+                 .select("trade_id","symbol","trade_date","price") \
+                 .toDF("buy_id","symbol","trade_date","buy_price")
+
+sells = trades_df.filter(F.col("side") == "SELL") \
+                 .select("trade_id","symbol","trade_date","price") \
+                 .toDF("sell_id","symbol","trade_date","sell_price")
+
+result_5_3 = buys.join(sells, on=["symbol","trade_date"], how="inner") \
+    .select("symbol","trade_date","buy_id","sell_id","buy_price","sell_price")
+
+result_5_3.show()
+
+
+# COMMAND ----------
+
+
+# =============================================================================
+# ██████████████████████████████████████████████████████████████████████████████
+#  SECTION 6 — STRING & DATE OPERATIONS
+# ██████████████████████████████████████████████████████████████████████████████
+# =============================================================================
+
+print("\n" + "=" * 70)
+print("  SECTION 6 — STRING & DATE OPERATIONS")
+print("=" * 70)
+
+# -----------------------------------------------------------------------------
+# CHALLENGE 6.1 ⭐⭐
+# From trades_df:
+#   a) Extract year, month, day from trade_date
+#   b) Find all trades in the first 3 days of the dataset
+#   c) Calculate how many days ago each trade was (from 2024-01-07)
+#   d) Format trade_date as "DD-MMM-YYYY" (e.g., "01-Jan-2024")
+# -----------------------------------------------------------------------------
+print("\n--- Challenge 6.1: Date Operations ---")
+# HINT: F.year(), F.month(), F.dayofmonth(), F.datediff(), F.date_format()
+
+# YOUR SOLUTION:
+
+
+# ANSWER:
+ref_date = F.to_date(F.lit("2024-01-07"), "yyyy-MM-dd")
+
+result_6_1 = trades_df.withColumn("yr",  F.year("trade_date")) \
+    .withColumn("mo",  F.month("trade_date")) \
+    .withColumn("dy",  F.dayofmonth("trade_date")) \
+    .withColumn("days_ago", F.datediff(ref_date, F.col("trade_date"))) \
+    .withColumn("formatted_date", F.date_format("trade_date", "dd-MMM-yyyy"))
+
+result_6_1.select("trade_id","trade_date","yr","mo","dy","days_ago","formatted_date").show()
+
+print("b) First 3 days:")
+min_date = trades_df.agg(F.min("trade_date")).collect()[0][0]
+trades_df.filter(
+    F.col("trade_date") <= F.date_add(F.lit(min_date), 2)
+).show()
+
+
+
+# COMMAND ----------
+
+print("b) First 3 days:")
+min_date = trades_df.agg(F.min("trade_date")).collect()[0][0]
+print(min_date)
+
+# COMMAND ----------
+
+
+
+# -----------------------------------------------------------------------------
+# CHALLENGE 6.2 ⭐⭐
+# String operations on trader names:
+#   a) Uppercase all trader names
+#   b) Create a trader_code: first 3 chars of name + "_" + region (e.g., "ALI_APAC")
+#   c) Find traders whose name starts with 'A' or 'B'
+#   d) Replace "BUY" with "PURCHASE" and "SELL" with "DISPOSAL" in the side column
+# -----------------------------------------------------------------------------
+print("\n--- Challenge 6.2: String Operations ---")
+# HINT: F.upper(), F.substring(), F.concat_ws(), F.startswith(), F.regexp_replace()
+
+# YOUR SOLUTION:
+
+
+# ANSWER:
+
+# ANSWER:
+result_6_2 = trades_df \
+    .withColumn("trader_upper", F.upper(F.col("trader"))) \
+    .withColumn("trader_code",
+        F.concat(F.substring(F.col("trader"), 1, 3), F.lit("_"), F.col("region"))
+    ) \
+    .withColumn("side_verbose",
+        F.regexp_replace(
+            F.regexp_replace(F.col("side"), "BUY", "PURCHASE"),
+            "SELL", "DISPOSAL"
+        )
+    )
+
+result_6_2.select("trader","trader_upper","trader_code","side","side_verbose").show()
+
+# COMMAND ----------
+
+
+print("c) Traders starting with A or B:")
+trades_df.filter(
+    F.col("trader").startswith("A") | F.col("trader").startswith("B")
+).select("trader").distinct().show()
+
+
+# COMMAND ----------
+
+
+# =============================================================================
+# ██████████████████████████████████████████████████████████████████████████████
+#  SECTION 7 — COMPLEX TYPES (ARRAY, MAP, STRUCT)
+# ██████████████████████████████████████████████████████████████████████████████
+# =============================================================================
+
+print("\n" + "=" * 70)
+print("  SECTION 7 — COMPLEX TYPES")
+print("=" * 70)
+
+# -----------------------------------------------------------------------------
+# CHALLENGE 7.1 ⭐⭐
+# Using nested_df:
+#   a) Explode the watchlist array — one row per symbol per trader
+#   b) Find traders who have "AAPL" in their watchlist
+#   c) Get the size of each trader's watchlist
+#   d) Add "NVDA" to every trader's watchlist
+# -----------------------------------------------------------------------------
+print("\n--- Challenge 7.1: Array Operations ---")
+# HINT: F.explode(), F.array_contains(), F.size(), F.array_union()
+
+# YOUR SOLUTION:
+
+
+display(nested_df)
+# ANSWER:
+print("a) Exploded watchlist:")
+nested_df.select("trader", F.explode("watchlist").alias("symbol")).show()
+
+print("b) Traders watching AAPL:")
+nested_df.filter(F.array_contains(F.col("watchlist"), "AAPL")) \
+         .select("trader").show()
+
+print("c) Watchlist sizes:")
+nested_df.withColumn("watchlist_size", F.size("watchlist")) \
+         .select("trader","watchlist_size").show()
+
+print("d) Add NVDA to watchlist:")
+nested_df.withColumn(
+    "watchlist", F.array_union(F.col("watchlist"), F.array(F.lit("NVDA")))
+).select("trader","watchlist").show(truncate=False)
+
+
+
+# COMMAND ----------
+
+
+# -----------------------------------------------------------------------------
+# CHALLENGE 7.2 ⭐⭐
+# Using nested_df:
+#   a) Extract the "risk" value from the attributes map
+#   b) Get all map keys for each trader
+#   c) Filter traders with risk == "HIGH"
+#   d) Add a new key "active" = "true" to each trader's attributes map
+# -----------------------------------------------------------------------------
+print("\n--- Challenge 7.2: Map Operations ---")
+# HINT: F.col("map")["key"], F.map_keys(), F.map_concat(), F.create_map()
+
+# YOUR SOLUTION:
+
+
+# ANSWER:
+print("a) Extract risk:")
+nested_df.withColumn("risk", F.col("attributes")["risk"]) \
+         .select("trader","risk").show()
+
+print("b) Map keys:")
+nested_df.withColumn("keys", F.map_keys("attributes")) \
+         .select("trader","keys").show()
+
+print("c) HIGH risk traders:")
+nested_df.filter(F.col("attributes")["risk"] == "HIGH").show()
+
+print("d) Add 'active' key:")
+nested_df.withColumn(
+    "attributes",
+    F.map_concat(F.col("attributes"), F.create_map(F.lit("active"), F.lit("true")))
+).select("trader","attributes").show(truncate=False)
+
+
+
+# COMMAND ----------
+
+display(nested_df)
+
+# COMMAND ----------
+
+
+# =============================================================================
+# ██████████████████████████████████████████████████████████████████████████████
+#  SECTION 8 — NULL HANDLING
+# ██████████████████████████████████████████████████████████████████████████████
+# =============================================================================
+
+print("\n" + "=" * 70)
+print("  SECTION 8 — NULL HANDLING")
+print("=" * 70)
+
+# -----------------------------------------------------------------------------
+# CHALLENGE 8.1 ⭐⭐  [VERY COMMON]
+# trades_df has nulls in price and quantity.
+#   a) Count nulls in each column
+#   b) Fill null prices with the AVERAGE price of that symbol
+#   c) Fill null quantities with 0
+#   d) Drop rows where BOTH price AND quantity are null
+# -----------------------------------------------------------------------------
+print("\n--- Challenge 8.1: Null Handling ---")
+# HINT: F.isNull(), F.count(), Window for avg per symbol, fillna()
+
+# YOUR SOLUTION:
+
+
+# ANSWER:
+print("a) Null counts per column:")
+null_counts = trades_df.select([
+    F.count(F.when(F.col(c).isNull(), c)).alias(c)
+    for c in trades_df.columns
+])
+null_counts.show()
+
+print("b) Fill null price with symbol average:")
+w_sym_avg = Window.partitionBy("symbol")
+result_8_1b = trades_df.withColumn(
+    "price",
+    F.coalesce(F.col("price"), F.avg("price").over(w_sym_avg))
+)
+result_8_1b.filter(F.col("symbol") == "GOOG").select("trade_id","symbol","price").show()
+
+print("c) Fill null quantity with 0:")
+result_8_1c = trades_df.fillna({"quantity": 0})
+result_8_1c.filter(F.col("trade_id") == 12).show()
+
+print("d) Drop rows where BOTH price AND quantity are null:")
+result_8_1d = trades_df.filter(
+    ~(F.col("price").isNull() & F.col("quantity").isNull())
+)
+print(f"Rows after drop: {result_8_1d.count()}")
+
+
+
+# COMMAND ----------
+
+
+# =============================================================================
+# ██████████████████████████████████████████████████████████████████████████████
+#  SECTION 9 — PERFORMANCE & OPTIMIZATION  [SENIOR LEVEL]
+# ██████████████████████████████████████████████████████████████████████████████
+# =============================================================================
+
+print("\n" + "=" * 70)
+print("  SECTION 9 — PERFORMANCE & OPTIMIZATION")
+print("=" * 70)
+
+# -----------------------------------------------------------------------------
+# CHALLENGE 9.1 ⭐⭐⭐  [SENIOR INTERVIEW FAVOURITE]
+# Explain and demonstrate the difference between:
+#   a) groupByKey vs reduceByKey (RDD level)
+#   b) Why chaining 50 withColumn() calls is slow
+#   c) When to use broadcast join
+#   d) How to detect and fix data skew
+# -----------------------------------------------------------------------------
+print("\n--- Challenge 9.1: Performance Concepts ---")
+
+# a) groupByKey vs reduceByKey
+print("a) groupByKey vs reduceByKey:")
+rdd = spark.parallelize([
+    ("AAPL", 100), ("GOOG", 200), ("AAPL", 150), ("GOOG", 300), ("AAPL", 80)
+])
+
+# BAD: groupByKey shuffles ALL values to reducer first
+# result_bad = rdd.groupByKey().mapValues(sum)
+
+# GOOD: reduceByKey combines locally BEFORE shuffle (map-side combine)
+result_good = rdd.reduceByKey(lambda a, b: a + b)
+print("reduceByKey result:", result_good.collect())
+
+# b) withColumn chain problem — use select() instead
+print("\nb) withColumn chain vs select():")
+# BAD — each withColumn adds a new projection node to the plan
+# df = df.withColumn("a", ...).withColumn("b", ...) ... x50
+
+# GOOD — single projection
+result_9_1b = trades_df.select(
+    "*",
+    (F.col("price") * 1.1).alias("price_with_tax"),
+    F.upper(F.col("symbol")).alias("symbol_upper"),
+    F.col("notional").cast("long").alias("notional_long"),
+)
+print("Single select() with multiple computed cols:")
+result_9_1b.select("trade_id","price_with_tax","symbol_upper","notional_long").show(3)
+
+# c) Broadcast join
+print("\nc) Broadcast join — traders_df is small, broadcast it:")
+result_9_1c = trades_df.join(
+    F.broadcast(traders_df),
+    trades_df["trader"] == traders_df["trader_name"],
+    how="left"
+)
+result_9_1c.explain()  # Look for "BroadcastHashJoin" in the plan
+
+# d) Skew detection
+print("\nd) Skew detection — partition distribution:")
+trades_df.groupBy("symbol").count().orderBy(F.desc("count")).show()
+# In real data: if one key has 10M rows and avg is 100 → SKEWED
+# Fix: salting technique (see pyspark_challenges.py Section 7 in tutor)
+
+
+
+# COMMAND ----------
+
+
+# -----------------------------------------------------------------------------
+# CHALLENGE 9.2 ⭐⭐⭐  [EXPLAIN PLAN READING]
+# Run explain() on a complex query and identify:
+#   a) Whether predicate pushdown is happening
+#   b) Whether broadcast join is chosen
+#   c) Number of shuffle stages
+# -----------------------------------------------------------------------------
+print("\n--- Challenge 9.2: Reading Explain Plans ---")
+
+complex_query = trades_df \
+    .filter(F.col("price") > 100) \
+    .join(F.broadcast(traders_df),
+          trades_df["trader"] == traders_df["trader_name"], "left") \
+    .groupBy("symbol") \
+    .agg(F.sum("notional").alias("total"))
+
+print("Formatted explain plan:")
+complex_query.explain(mode="formatted")
+# Look for:
+#   - "Filter" node close to "Scan" = predicate pushdown ✅
+#   - "BroadcastHashJoin" = broadcast join chosen ✅
+#   - "Exchange" nodes = shuffle stages (each = a stage boundary)
+
+
+# COMMAND ----------
+
+
+
+# =============================================================================
+# ██████████████████████████████████████████████████████████████████████████████
+#  SECTION 10 — RDD OPERATIONS
+# ██████████████████████████████████████████████████████████████████████████████
+# =============================================================================
+
+print("\n" + "=" * 70)
+print("  SECTION 10 — RDD OPERATIONS")
+print("=" * 70)
+
+# -----------------------------------------------------------------------------
+# CHALLENGE 10.1 ⭐⭐
+# Using RDDs (not DataFrames):
+#   a) Create an RDD from trades_data list
+#   b) Filter only BUY trades
+#   c) Calculate total notional per symbol using reduceByKey
+#   d) Find the symbol with highest total notional
+# -----------------------------------------------------------------------------
+print("\n--- Challenge 10.1: RDD Operations ---")
+# HINT: sc.parallelize(), filter(), map(), reduceByKey(), max()
+
+# YOUR SOLUTION:
+
+
+# ANSWER:
+sc = spark.sparkContext
+
+trades_rdd = sc.parallelize(trades_data)
+
+# b) Filter BUY trades (side is index 5)
+buy_rdd = trades_rdd.filter(lambda row: row[5] == "BUY")
+print("BUY trade count:", buy_rdd.count())
+
+# c) Total notional per symbol (price=2, qty=3)
+notional_rdd = buy_rdd \
+    .filter(lambda row: row[2] is not None and row[3] is not None) \
+    .map(lambda row: (row[1], row[2] * row[3])) \
+    .reduceByKey(lambda a, b: a + b)
+
+print("Total notional per symbol (BUY):", notional_rdd.collect())
+
+# d) Symbol with highest notional
+top_symbol = notional_rdd.max(key=lambda x: x[1])
+print("Top symbol by notional:", top_symbol)
+
+
+# =============================================================================
+# ██████████████████████████████████████████████████████████████████████████████
+#  SECTION 11 — SPARK SQL
+# ██████████████████████████████████████████████████████████████████████████████
+# =============================================================================
+
+print("\n" + "=" * 70)
+print("  SECTION 11 — SPARK SQL")
+print("=" * 70)
+
+# -----------------------------------------------------------------------------
+# CHALLENGE 11.1 ⭐⭐  [COMMON — SQL vs DataFrame API equivalence]
+# Register trades_df as a temp view and solve using SQL:
+#   a) Top 3 symbols by total notional
+#   b) Traders who traded more than 2 different symbols
+#   c) Running total of notional per trader ordered by trade_id
+# -----------------------------------------------------------------------------
+print("\n--- Challenge 11.1: Spark SQL ---")
+# HINT: createOrReplaceTempView(), spark.sql(), CTEs, window functions in SQL
+
+# YOUR SOLUTION:
+
+
+# ANSWER:
+trades_df.createOrReplaceTempView("trades")
+traders_df.createOrReplaceTempView("traders")
+
+print("a) Top 3 symbols by total notional:")
+spark.sql("""
+    SELECT symbol, ROUND(SUM(notional), 2) AS total_notional
+    FROM trades
+    WHERE notional IS NOT NULL
+    GROUP BY symbol
+    ORDER BY total_notional DESC
+    LIMIT 3
+""").show()
+
+print("b) Traders with > 2 distinct symbols:")
+spark.sql("""
+    SELECT trader, COUNT(DISTINCT symbol) AS symbol_count
+    FROM trades
+    GROUP BY trader
+    HAVING COUNT(DISTINCT symbol) > 2
+""").show()
+
+print("c) Running total of notional per trader:")
+spark.sql("""
+    SELECT
+        trader,
+        trade_id,
+        notional,
+        SUM(notional) OVER (
+            PARTITION BY trader
+            ORDER BY trade_id
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        ) AS running_total
+    FROM trades
+    WHERE notional IS NOT NULL
+    ORDER BY trader, trade_id
+""").show()
+
+
+# =============================================================================
+# ██████████████████████████████████████████████████████████████████████████████
+#  SECTION 12 — BONUS CHALLENGES  [HARDEST — REAL INTERVIEW SCENARIOS]
+# ██████████████████████████████████████████████████████████████████████████████
+# =============================================================================
+
+print("\n" + "=" * 70)
+print("  SECTION 12 — BONUS HARD CHALLENGES")
+print("=" * 70)
+
+# -----------------------------------------------------------------------------
+# CHALLENGE 12.1 ⭐⭐⭐  [PIVOT + UNPIVOT]
+# Create a pivot table showing total notional per symbol per region.
+# Then "unpivot" it back to long format.
+# Expected pivot output:
+#   symbol | AMER | APAC | EMEA
+# -----------------------------------------------------------------------------
+print("\n--- Challenge 12.1: Pivot & Unpivot ---")
+
+# YOUR SOLUTION:
+
+
+# ANSWER:
+print("Pivot — symbol × region notional:")
+pivot_df = trades_df.groupBy("symbol") \
+    .pivot("region", ["AMER", "APAC", "EMEA"]) \
+    .agg(F.round(F.sum("notional"), 2))
+pivot_df.show()
+
+# Unpivot using stack() SQL function
+print("Unpivot back to long format:")
+pivot_df.createOrReplaceTempView("pivot_table")
+spark.sql("""
+    SELECT symbol, region, notional
+    FROM pivot_table
+    LATERAL VIEW EXPLODE(
+        MAP('AMER', AMER, 'APAC', APAC, 'EMEA', EMEA)
+    ) t AS region, notional
+    WHERE notional IS NOT NULL
+""").show()
+
+
+# -----------------------------------------------------------------------------
+# CHALLENGE 12.2 ⭐⭐⭐  [SLOWLY CHANGING DIMENSION — SCD TYPE 2]
+# Given a new batch of trades (updates), implement SCD Type 2 logic:
+#   - If trade_id exists and price changed → close old record, insert new
+#   - If trade_id is new → insert
+#   - Keep history with valid_from, valid_to, is_current columns
+# -----------------------------------------------------------------------------
+print("\n--- Challenge 12.2: SCD Type 2 Pattern ---")
+
+# Simulate existing "historical" table
+existing_data = [
+    (1, "AAPL", 150.0, 100, "2024-01-01", "2024-01-01", "9999-12-31", True),
+    (2, "GOOG", 2800.0, 50, "2024-01-01", "2024-01-01", "9999-12-31", True),
+]
+existing_df = spark.createDataFrame(
+    existing_data,
+    ["trade_id","symbol","price","quantity","trade_date",
+     "valid_from","valid_to","is_current"]
+)
+
+# New batch — trade 1 has updated price, trade 3 is new
+updates_data = [
+    (1, "AAPL", 155.0, 100, "2024-01-08"),  # price changed
+    (3, "MSFT", 300.0, 150, "2024-01-08"),  # new trade
+]
+updates_df = spark.createDataFrame(
+    updates_data,
+    ["trade_id","symbol","price","quantity","trade_date"]
+)
+
+# YOUR SOLUTION:
+
+
+# ANSWER:
+today = "2024-01-08"
+
+# Step 1: Find records that changed
+changed = existing_df.filter(F.col("is_current") == True) \
+    .join(updates_df, on="trade_id", how="inner") \
+    .filter(existing_df["price"] != updates_df["price"])
+
+# Step 2: Close old records
+closed = existing_df.join(
+    changed.select("trade_id"), on="trade_id", how="left_semi"
+).withColumn("valid_to", F.lit(today)) \
+ .withColumn("is_current", F.lit(False))
+
+# Step 3: Unchanged existing records
+unchanged = existing_df.join(
+    changed.select("trade_id"), on="trade_id", how="left_anti"
+)
+
+# Step 4: New/updated records to insert
+to_insert = updates_df \
+    .withColumn("valid_from", F.lit(today)) \
+    .withColumn("valid_to",   F.lit("9999-12-31")) \
+    .withColumn("is_current", F.lit(True))
+
+# Step 5: Union all
+final_scd = unchanged.unionByName(closed).unionByName(to_insert)
+final_scd.orderBy("trade_id","valid_from").show(truncate=False)
+
+
+# -----------------------------------------------------------------------------
+# CHALLENGE 12.3 ⭐⭐⭐  [INTERVIEW FAVOURITE — MEDIAN WITHOUT PERCENTILE_APPROX]
+# Calculate the EXACT median price per symbol without using
+# percentile_approx() — use window functions instead.
+# (Tests deep window function knowledge)
+# -----------------------------------------------------------------------------
+print("\n--- Challenge 12.3: Exact Median via Window Functions ---")
+# HINT:
+#   1. row_number() ascending and descending per symbol
+#   2. Median row(s) = where asc_rank + desc_rank == total_count + 1
+#      (or total_count + 2 for even counts)
+#   3. Average those rows
+
+# YOUR SOLUTION:
+
+
+# ANSWER:
+w_asc  = Window.partitionBy("symbol").orderBy(F.asc("price"))
+w_desc = Window.partitionBy("symbol").orderBy(F.desc("price"))
+w_cnt  = Window.partitionBy("symbol")
+
+result_12_3 = prices_df \
+    .withColumn("rn_asc",  F.row_number().over(w_asc)) \
+    .withColumn("rn_desc", F.row_number().over(w_desc)) \
+    .withColumn("total",   F.count("*").over(w_cnt)) \
+    .filter(F.col("rn_asc").between(
+        F.col("total") / 2,
+        F.col("total") / 2 + 1
+    )) \
+    .groupBy("symbol") \
+    .agg(F.avg("close_price").alias("exact_median"))
+
+result_12_3.show()
+
+
+# =============================================================================
+# SUMMARY OF KEY PATTERNS TO REMEMBER
+# =============================================================================
+print("\n" + "=" * 70)
+print("  SUMMARY — KEY PATTERNS FOR INTERVIEWS")
+print("=" * 70)
+print("""
+  1.  Top N per group          → Window rank() + filter(rank <= N)
+  2.  Deduplication            → Window row_number() + filter(rn == 1)
+  3.  Running total            → Window rowsBetween(unboundedPreceding, currentRow)
+  4.  % of total               → Window rowsBetween(unbounded, unbounded) for grand total
+  5.  Lag/Lead (prev/next row) → F.lag() / F.lead() with Window.orderBy()
+  6.  Consecutive streaks      → lag + datediff + cumsum of gap flags
+  7.  Anti-join (NOT IN)       → left_anti join
+  8.  Semi-join (EXISTS)       → left_semi join
+  9.  Null fill with group avg → F.coalesce(col, F.avg(col).over(Window.partitionBy()))
+  10. Pivot                    → groupBy().pivot().agg()
+  11. Explode array            → F.explode() / F.explode_outer() (keeps nulls)
+  12. Broadcast small table    → F.broadcast(small_df) in join
+  13. Skew fix                 → Salting: add random int to key, explode other side
+  14. SCD Type 2               → close old + insert new via unionByName
+  15. Exact median             → row_number asc + desc, filter middle rows, avg
+""")
+
+spark.stop()
+print("Spark session stopped. All challenges complete!")
+
+
